@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>embed-sdk live testnet harness</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0b0f14; color: #e6edf3; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.1rem; color: #7ee787; }
+    .step { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    button { background: #238636; color: white; border: none; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+    button:disabled { background: #30363d; cursor: not-allowed; }
+    pre { white-space: pre-wrap; word-break: break-all; background: #010409; padding: 0.75rem; border-radius: 6px; font-size: 0.8rem; }
+    a { color: #58a6ff; }
+  </style>
+</head>
+<body>
+  <h1>@lumenglide/embed-sdk — real testnet verification harness</h1>
+  <p style="color:#8b949e; font-size:0.85rem;">This is not a product UI. It exists only to prove, against real testnet, that the SDK's passkey-authorized wallet execution actually works end to end. Every action below is a real transaction.</p>
+
+  <div class="step">
+    <div id="funderStatus">Funding a fresh testnet keypair...</div>
+  </div>
+
+  <div class="step">
+    <button id="createBtn" disabled>1. Create real passkey</button>
+    <pre id="createOut"></pre>
+  </div>
+
+  <div class="step">
+    <button id="deployBtn" disabled>2. Deploy real wallet + init with passkey</button>
+    <pre id="deployOut"></pre>
+  </div>
+
+  <div class="step">
+    <button id="executeBtn" disabled>3. Execute get_owner() authorized ONLY by the passkey</button>
+    <pre id="executeOut"></pre>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
