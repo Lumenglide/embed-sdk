@@ -65,21 +65,31 @@ no browser extension required for day-to-day use.
 - **Relayer client** (`src/relayer.ts`): a thin, typed wrapper around a real
   `stellar-gasless-relayer` instance's `/v1/relay` endpoint.
 
-## What is NOT wired together yet -- the real next milestone
+## Gasless relaying
 
-`wallet.ts`'s `executeViaPasskey` still requires a **fee-paying wallet signature**
-(Freighter, xBull, etc.) for the outer transaction, even though the passkey authorizes the
-actual call. That means today's flow is passkey-authorized but not yet gasless
-end-to-end. Making it genuinely gasless means: build the transaction, get the passkey's
-authorization entry, then submit the fully-authorized XDR through `relayer.ts`'s
-`relayTransaction()` instead of `tx.signAndSend()` -- so the end user never needs a funded
-account or a browser wallet extension at all. That integration is the next real piece of
-work, not something this version claims to have solved.
+`deployPasskeyWallet` and `executeViaPasskey` both automatically route through a real
+`stellar-gasless-relayer` instance whenever `config.relayerUrl` is set (empty string keeps
+the direct `signAndSend` path, unchanged). On the relay path, the transaction is signed
+locally (`tx.sign()`, never submitted directly) and its XDR is handed to `relayer.ts`'s
+`relayTransaction()`, which the relayer wraps in a real `FeeBumpTransaction` paid by its own
+sponsoring keypair pool -- confirmed against `stellar-gasless-relayer`'s own
+`FeeBumpRelayer.relayTransaction` source directly, not assumed. The fee-paying account
+still has to exist and still classically signs the outer transaction envelope (Soroban
+requires that regardless of who's authorizing the actual contract call), but it no longer
+needs an ongoing XLM balance to cover fees -- that's what the relayer actually removes, not
+the account itself.
 
-Also not yet built: a session-key request/grant flow (the contract already supports
-`add_session_key`/`get_session_key`; this SDK doesn't expose it yet), and the actual
-`embed-widget` UI package (the "Connect" button + modal a dApp actually drops into their
-page) -- that's a separate package in this org, built on top of this one.
+**Status: code-complete, type-checked and built clean, but not yet exercised against a real
+running relayer instance** -- that needs an actual deployed `stellar-gasless-relayer` with a
+funded sponsor keypair, a real external service dependency beyond this SDK's own code, not
+something a unit test can substitute for.
+
+## What is NOT wired together yet
+
+A session-key request/grant flow (the contract already supports `add_session_key`/
+`get_session_key`; this SDK doesn't expose it yet). `embed-widget` (a separate package in
+this org, built on top of this one) is the actual "Connect" button + modal UI a dApp drops
+into its page.
 
 ## Install
 

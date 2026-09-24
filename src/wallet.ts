@@ -7,7 +7,52 @@
 import { Client as ContractClient } from '@stellar/stellar-sdk/contract';
 import { hash, xdr } from '@stellar/stellar-sdk';
 import { hexToBytes, signPasskeyChallenge } from './passkey.js';
+import { relayTransaction } from './relayer.js';
 import type { LumenglideConfig, SignTransaction } from './types.js';
+
+/**
+ * Submits an already-built, already-simulated `AssembledTransaction` either directly
+ * (`signAndSend`, which charges the real network fee against the signer's own account) or
+ * through a real `stellar-gasless-relayer` instance when `config.relayerUrl` is set -- the
+ * ONLY thing that changes between the two paths. Soroban still requires a real account to
+ * classically sign the outer transaction envelope either way (that's separate from the
+ * passkey's own `SorobanAuthorizationEntry`, which is what actually authorizes the wallet
+ * call) -- what the relayer removes is that account ever needing an ongoing XLM balance to
+ * cover fees, since the relayer wraps it in a real `FeeBumpTransaction` paid by its own
+ * sponsoring keypair pool (confirmed by reading stellar-gasless-relayer's own
+ * `FeeBumpRelayer.relayTransaction` source directly, not assumed).
+ *
+ * `tx.sign()` (as opposed to `signAndSend()`) only signs locally -- `tx.signed` becomes a
+ * real `Transaction` instance without anything being submitted -- confirmed by reading
+ * `AssembledTransaction.sign`'s own implementation. Its `toXDR()` is exactly the
+ * `innerTransactionXdr` the relayer's `/v1/relay` endpoint expects.
+ */
+async function submitViaRelayOrDirect(
+  tx: {
+    sign: () => Promise<void>;
+    signed?: { toXDR(): string };
+    signAndSend: () => Promise<{
+      sendTransactionResponse?: { hash?: string };
+      getTransactionResponse?: { txHash?: string };
+    }>;
+  },
+  config: LumenglideConfig
+): Promise<{ txHash: string }> {
+  if (config.relayerUrl) {
+    await tx.sign();
+    if (!tx.signed) {
+      throw new Error('submitViaRelayOrDirect: tx.sign() completed without setting tx.signed.');
+    }
+    const relayResult = await relayTransaction(config, tx.signed.toXDR());
+    if (!relayResult.success) {
+      throw new Error(`Gasless relay rejected this transaction: ${relayResult.error}`);
+    }
+    return { txHash: relayResult.hash };
+  }
+
+  const sent = await tx.signAndSend();
+  return { txHash: sent.sendTransactionResponse?.hash ?? sent.getTransactionResponse?.txHash ?? '' };
+}
 
 // NOTE on why this file does NOT use @stellar/stellar-sdk's exported `authorizeEntry`
 // helper for the custom-account signing step below:
@@ -53,15 +98,21 @@ export async function deployPasskeyWallet(
     publicKey: funderAddress,
     signTransaction: funderSignTransaction,
   });
-  const deployedSent = await deployTx.signAndSend();
-  const deployedClient = deployedSent.result as InstanceType<typeof ContractClient>;
+  // A CreateContract operation's resulting address is fully deterministic from the source
+  // address + salt (confirmed by reading Client.deploy's own `parseResultXdr` -- it derives
+  // the contract ID from the SIMULATION's return value, not from post-submission state), so
+  // this is already known and correct before we've signed or submitted anything, on either
+  // path below.
+  const deployedClient = deployTx.result as InstanceType<typeof ContractClient>;
   const walletContractId = (deployedClient as any).options.contractId as string;
+
+  await submitViaRelayOrDirect(deployTx as any, config);
 
   const initTx = await (deployedClient as any).init(
     { owner: funderAddress, passkey_pubkey: hexToBytes(sec1PublicKeyHex) },
     { timeoutInSeconds: 1800 }
   );
-  await initTx.signAndSend();
+  await submitViaRelayOrDirect(initTx, config);
 
   return walletContractId;
 }
@@ -258,6 +309,17 @@ export async function executeViaPasskey(
   // resource/fee data when auth is already present, so re-simulating here recomputes the
   // budget for the REAL signed entry without touching the signature we just attached.
   await tx.simulate();
+
+  if (config.relayerUrl) {
+    // The relayer submits via Horizon's classic submitTransaction (per its own
+    // FeeBumpRelayer source), which doesn't return the decoded Soroban return value the way
+    // RPC's getTransaction does -- getting that would need a separate getTransaction(hash)
+    // call after the fact. Not attempted here for the same reason the direct path already
+    // treats a decode failure as non-fatal: the actual proof this function provides is a
+    // real, confirmed, passkey-authorized transaction, not the decoded return value.
+    const { txHash } = await submitViaRelayOrDirect(tx as any, config);
+    return { result: undefined, txHash };
+  }
 
   const sent = await tx.signAndSend();
 
